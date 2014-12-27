@@ -1,0 +1,9 @@
+{application, mmqtt,
+  [
+    {description, "Modular MQTT Broker"},
+    {vsn, "0.1"},
+    {registered, []},
+    {applications, [kernel, stdlib]},
+    {mod, {mmqtt_app, []}},
+    {env, []}
+]}.
