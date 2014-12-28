@@ -110,7 +110,7 @@ connecting_state(Socket, {ok, #mqtt_connect{}=Connect, Rest}, Options, {Mod, Arg
     handle_event(Mod, in_packet, [Connect], Args),
     case handle_connect(Mod, Connect, Socket, Args) of
         {ok, State} -> 
-            handle_event(State#state.dispatch, connected, [], State#state.context),
+            handle_event(Mod, connected, [], Args),
             ?MODULE:connected_state(Socket, mmqtt_packet:decode(Rest), Options, Callback, State);
         close ->
             mmqtt_tcp:close(Socket),
@@ -147,12 +147,21 @@ connected_state(Socket, {more, _}=More, Options, {Mod, Args}=Callback, #state{di
             handle_event(Mod, connection_error, [Reason], Args),
             exit(normal);
         check_alive ->
-            %% TODO: do a real check
-            AliveCheck = State#state.alive_check,
-            Interval = AliveCheck#alive_check.check_interval,
-            TRef = erlang:send_after(timer:seconds(Interval), self, check_alive),
-            AliveCheck1 = AliveCheck#alive_check{timer_ref=TRef},
-            ?MODULE:connected_state(Socket, More, Options, Callback, State#state{alive_check=AliveCheck1}); 
+            case State#state.alive_check of
+                undefined ->
+                    ?MODULE:connected_state(Socket, More, Options, Callback, State); 
+                #alive_check{check_interval=Interval, last_packet_received=LastPacket}=AliveCheck ->
+                    case timer:now_diff(os:timestamp(), LastPacket) of
+                        Diff when Diff div 1000000 > Interval ->
+                            handle_event(Mod, connection_timeout, [], Args),
+                            exit(normal);
+                        _ ->
+                            TRef = erlang:send_after(timer:seconds(Interval), self(), check_alive),
+                            AliveCheck1 = AliveCheck#alive_check{timer_ref=TRef},
+                            ?MODULE:connected_state(Socket, More, Options, Callback, 
+                                State#state{alive_check=AliveCheck1})
+                    end
+            end;
         Message ->
             handle_event(Mod, in_message, [Message], Args),
             case handle_info(Dispatch, Socket, Message, Context) of

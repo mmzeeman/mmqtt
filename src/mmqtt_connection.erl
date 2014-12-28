@@ -36,39 +36,43 @@
     options :: term()
 }).
 
-%% MQTT 3.1.1
-connect(#mqtt_connect{protocol_name= <<"MQTT">>, protocol_version=4}=Packet, Socket, Options) ->
+
+%% Connect
+
+connect(#mqtt_connect{protocol_name= <<"MQTT">>, 
+        protocol_version=4}=Packet, Socket, Options) ->
     mqtt_3_1_1_connect(Packet, Socket, Options);
-%% MQTT 3.1
-connect(#mqtt_connect{protocol_name= <<"MQIsdp">>, protocol_version=3}=Packet, Socket, Options) ->
+connect(#mqtt_connect{protocol_name= <<"MQIsdp">>, 
+        protocol_version=3}=Packet, Socket, Options) ->
     mqtt_3_1_connect(Packet, Socket, Options);
+
 connect(#mqtt_connect{}, _Socket, _Options) ->
     ignore.
 
-%% Subscribe 
+%% Subscribe to a topic
 handle_packet(#mqtt_subscribe{}=Subscribe, #state{session_pid=Pid}=State) ->
     subscribe(Pid, Subscribe, State);
 
-%% Publish
+%% Publish a message
 handle_packet(#mqtt_publish{}=Publish, #state{session_pid=Pid}) ->
     mmqtt_session:publish(Pid, Publish);
 
-%% Unsubscribe
+%% Unsubscribe from a topic
 handle_packet(#mqtt_unsubscribe{}=Unsubscribe, #state{session_pid=Pid}=State) ->
     unsubscribe(Pid, Unsubscribe, State);
 
-%% Disconnect
+%% Disconnect the session
 handle_packet(#mqtt_disconnect{}=Disconnect, #state{session_pid=Pid}) ->
     io:fwrite(standard_error, "disconnect: ~p~n", [Disconnect]),
     unlink(Pid),
     noreply;
 
-%% Ping
+%% Respond to ping packets
 handle_packet(#mqtt_pingreq{}, _Args) ->
     {reply, #mqtt_pingresp{}};
 
+%% Other packages are ignored
 handle_packet(MqttPacket, Args) ->
-    io:fwrite(standard_error, "handle_packet: ~p, ~p~n", [MqttPacket, Args]),
     noreply.
 
 %% Events
@@ -135,5 +139,4 @@ subscribe(SessionPid, #mqtt_subscribe{topics=Topics, packet_identifier=PackId}, 
 unsubscribe(SessionPid, #mqtt_unsubscribe{topics=Topics, packet_identifier=PackId}, _State) ->
     _ = mmqtt_session:unsubscribe(SessionPid, Topics),
     noreply.
-    
     

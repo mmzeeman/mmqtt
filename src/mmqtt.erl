@@ -50,7 +50,7 @@
 
 -type event() :: mmqtt_startup | mmqtt_reconfigure |
     connect_timeout | connect_throw | connect_errori | connect_exit |
-    connection_closed | connection_error |
+    connection_closed | connection_error | connection_timeout |
     protocol_error | packet_parse_error |
     in_packet | in_message |
     packet_throw | packet_error | packet_exit |

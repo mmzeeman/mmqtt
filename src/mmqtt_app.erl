@@ -23,7 +23,29 @@
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
+    %% Apps needed for lager
+    ok = ensure_started([syntax_tools, compiler, goldrush, lager]),
+
+    %% And for gproc
+    ok = ensure_started([gproc]),
+
     mmqtt_sup:start_link().
 
 stop(_State) ->
     ok.
+
+
+%%
+%% Helpers
+%%
+
+ensure_started([]) -> ok;
+ensure_started([App|Apps]) ->
+    case application:start(App) of
+        ok -> ok;
+        {error, {already_started, App}} -> ok
+    end,
+    ensure_started(Apps).
+
+
+
