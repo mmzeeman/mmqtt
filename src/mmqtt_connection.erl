@@ -72,7 +72,7 @@ handle_packet(#mqtt_pingreq{}, _Args) ->
     {reply, #mqtt_pingresp{}};
 
 %% Other packages are ignored
-handle_packet(MqttPacket, Args) ->
+handle_packet(_MqttPacket, _Args) ->
     noreply.
 
 %% Events
@@ -86,46 +86,27 @@ handle_info(Msg, Args) ->
 
 %% Connect
 
-mqtt_3_1_1_connect(#mqtt_connect{client_id=ClientId, clean_session=true, will=Will}, Socket, Options) ->
-    Id = case ClientId of <<>> -> make_ref(); _ -> ClientId end,
-
-    case mmqtt_notifier:first(#is_allowed{action=connect, object=Socket}, ClientId) of
-        true ->
-            %% Stop and remove existing session.
-            case mmqtt_session:whereis_name(Id) of
-                undefined -> ok;
-                Pid -> _ = mmqtt_session:stop(Pid)
-            end,
-
-            %% Start a clean session
-            ok = mmqtt_session:start(ClientId, self()),
-            {reply, #mqtt_connack{connect_return_code=?ACCEPTED}, #state{client_id=ClientId, options=Options}};
-        _ ->
-            {stop, #mqtt_connack{connect_return_code=?NOT_AUTHORIZED}}
-    end.
-
-mqtt_3_1_connect(#mqtt_connect{client_id=ClientId, clean_session=true, will=Will}, Socket, Options) ->
-    Id = case ClientId of <<>> -> make_ref(); _ -> ClientId end,
-
-    %% Stop/clean existing session
-    case mmqtt_session:whereis_name(Id) of
-        undefined -> ok;
-        _Pid -> 
-            _ = mmqtt_session:stop(Id)
-    end,
-
-    %% TODO: What should be in the callback of the session?
-    {ok, SessionPid} = mmqtt_session:start(Id, {mmqtt_connection, []}),
-    true = erlang:link(SessionPid),
-
+mqtt_3_1_1_connect(#mqtt_connect{client_id=ClientId, 
+        clean_session=true, will=Will}, _Socket, Options) ->
     %% TODO: Authorization, 
-    %% TODO: Monitor this connection process and add the will to the session.
-    %% TODO: Monitor the session, when it crashes the connection should be stopped too.
-    %% TODO: Maybe the processes should be linked instead of monitored.
+    ok = mmqtt_session:clean(ClientId),
+
+    SessionId = mmqtt_session:session_id(ClientId),
+    {ok, SessionPid} = mmqtt_session:start(SessionId, true, Will),
 
     {reply, #mqtt_connack{connect_return_code=?ACCEPTED}, 
-        #state{client_id=Id, session_pid=SessionPid, options=Options}}.
+        #state{client_id=SessionId, session_pid=SessionPid, options=Options}}.
 
+mqtt_3_1_connect(#mqtt_connect{client_id=ClientId, 
+        clean_session=true, will=Will}, _Socket, Options) ->
+    %% TODO: Authorization, 
+    ok = mmqtt_session:clean(ClientId),
+
+    SessionId = mmqtt_session:session_id(ClientId),
+    {ok, SessionPid} = mmqtt_session:start(SessionId, true, Will),
+
+    {reply, #mqtt_connack{connect_return_code=?ACCEPTED}, 
+        #state{client_id=SessionId, session_pid=SessionPid, options=Options}}.
 
 %%
 %% Helpers
@@ -136,7 +117,7 @@ subscribe(SessionPid, #mqtt_subscribe{topics=Topics, packet_identifier=PackId}, 
     Ack = #mqtt_suback{packet_identifier=PackId, return_codes=Reply},
     {reply, Ack, State}.
 
-unsubscribe(SessionPid, #mqtt_unsubscribe{topics=Topics, packet_identifier=PackId}, _State) ->
+unsubscribe(SessionPid, #mqtt_unsubscribe{topics=Topics, packet_identifier=_PackId}, _State) ->
     _ = mmqtt_session:unsubscribe(SessionPid, Topics),
     noreply.
     

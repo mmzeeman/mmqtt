@@ -23,9 +23,12 @@
 
 % api 
 -export([
-    start/2,
+    start/3,
     start_link/1,
     stop/1,
+
+    clean/1,
+    session_id/1,
 
     publish/2,
     subscribe/2,
@@ -52,14 +55,14 @@
 -record(state, {
     id :: binary(),
     connection=undefined :: undefined | pid(),
+    clean_session=true :: boolean(),
+    will=undefined,
 
     sent_qos_1_2_pending_ack=[],
     recv_qos_2_pending_ack=[],
 
     qos_1_2_pending_trans=[],
-    qos_1_pending_trans=[],
-    
-    callback :: {module(), atom()}
+    qos_1_pending_trans=[]
 }).
 
 
@@ -69,12 +72,14 @@
 
 % @doc Start a new session
 %
-start(Id, {_Mod, _Args}=Callback) ->
+start(Id, CleanSession, Will) ->
     supervisor:start_child(mmqtt_session_sup, {Id,
             {?MODULE, start_link, [[
-                        {id, Id}, 
-                        {connection, self()}, 
-                        {callback, Callback}]]}, temporary, 5000, worker, dynamic}).
+                        {id, Id},
+                        {clean_session, CleanSession},
+                        {will, Will},
+                        {connection, self()} 
+                    ]]}, temporary, 5000, worker, dynamic}).
 
 % @doc Stop a session
 %
@@ -90,9 +95,32 @@ start_link(Opts) ->
     Id = required_opt(id, Opts),
     gen_server:start_link({via, ?MODULE, Id}, ?MODULE, [Opts], []).
 
+
+% @doc Clean all previously existing data for this session
+%
+clean(<<>>) ->
+    ok;
+clean(ClientId) ->
+    case whereis_name(ClientId) of
+        undefined -> ok;
+        _Pid ->
+            _ = stop(ClientId),
+            ok
+    end.
+
+
+% @doc Get an id for this session.
+% 
+session_id(<<>>) ->
+    %% Generate a random session id.
+    Rand = base64:encode(crypto:rand_bytes(12)),
+    <<"mmqtt-", Rand/binary>>;
+session_id(ClientId) ->
+    ClientId.
+
+
 % @doc Publish a message
 %
-
 publish(_ClientId, #mqtt_publish{qos=0}=Message) ->
     %% Route the message, without bothering the session process.
     mmqtt_router:publish(Message),
@@ -111,6 +139,7 @@ subscribe(ClientId, Topics) ->
 
 
 % @doc Unsubscribe from topics
+%
 unsubscribe(Pid, Topics) when is_pid(Pid) ->
     gen_server:call(Pid, {unsubscribe, Topics});
 unsubscribe(ClientId, Topics) ->
@@ -151,15 +180,19 @@ name(Bin) when is_binary(Bin) ->
 %%
 
 init([Opts]) ->
+    process_flag(trap_exit, true),
+
     Id = proplists:get_value(id, Opts),
 
-    Callback = required_opt(callback, Opts),
-    CallbackArgs = proplists:get_value(callback_args, Opts),
-
+    %% Link to the connection, if it goes down and we have a will we
+    %% have to publish it.
     Connection = required_opt(connection, Opts),
     erlang:link(Connection),
 
-    {ok, #state{id=Id, connection=Connection, callback={Callback, CallbackArgs}}}.
+    Will = required_opt(will, Opts),
+    CleanSession = required_opt(clean_session, Opts),
+
+    {ok, #state{id=Id, will=Will, clean_session=CleanSession, connection=Connection}}.
 
 %% Publish
 handle_call({publish, _Msg}, _From, State) ->
@@ -182,8 +215,6 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({route, #mqtt_publish{}=Msg}, #state{connection=Pid}=State) ->
-    lager:info("Route: ~p", [Msg]),
-
     case Pid of
         undefined ->
             lager:info("no connection: ~p", [Msg]);
@@ -192,7 +223,8 @@ handle_info({route, #mqtt_publish{}=Msg}, #state{connection=Pid}=State) ->
     end,
 
     {noreply, State};
-handle_info(_Msg, #state{callback={_Callback, _CallbackArgs}}=State) ->
+handle_info(Msg, #state{}=State) ->
+    lager:info("session: ~p (~p)", [Msg, State]),
     {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -216,10 +248,10 @@ do_unsubscribe(Topics) ->
     mmqtt_router:unsubscribe(Topics, self()).
 
 required_opt(Name, Opts) ->
-    case proplists:get_value(Name, Opts) of
-        undefined ->
+    case proplists:lookup(Name, Opts) of
+        none ->
             throw(badarg);
-        Value -> 
+        {Name, Value} -> 
             Value
     end.
 
