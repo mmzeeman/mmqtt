@@ -112,9 +112,9 @@ connecting_state(Socket, {ok, #mqtt_connect{}=Connect, Rest}, Options, {Mod, Arg
         {ok, State} -> 
             handle_event(Mod, connected, [], Args),
             ?MODULE:connected_state(Socket, mmqtt_packet:decode(Rest), Options, Callback, State);
-        close ->
+        {stop, Reason} ->
             mmqtt_tcp:close(Socket),
-            exit(normal)
+            exit(Reason)
     end;
 
 connecting_state(Socket, {ok, MqttPacket, _Rest}, _Options, {Mod, Args}) ->
@@ -223,21 +223,23 @@ handle_connect(Mod, Packet, Socket, Args) ->
             end,
             ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, State#state{dispatch=Dispatch, context=Context}};
-        {{stop, Reason}, _} -> 
+        {{stop, Reason}, _Dispatch} -> 
+            ok = mmqtt_tcp:send(Socket, 
+                mmqtt_packet:encode(#mqtt_connack{connect_return_code=?UNACCEPTABLE_PROTOCOL_VERSION})),
             {stop, Reason};
-        {{stop, Reason, Packet}, _} -> 
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Packet)),
+        {{stop, Reason, #mqtt_connack{}=Reply}, _Dispatch} -> 
+            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
             {stop, Reason} 
     catch 
         throw:Exc ->
             handle_event(Mod, connect_throw, [Packet, Exc, erlang:get_stacktrace()], Args),
-            close;
+            {stop, normal};
         error:Error ->
             handle_event(Mod, connect_error, [Packet, Error, erlang:get_stacktrace()], Args),
-            close;
+            {stop, normal};
         exit:Exit ->
             handle_event(Mod, connect_exit, [Packet, Exit, erlang:get_stacktrace()], Args),
-            close
+            {stop, normal} 
     end.
 
 

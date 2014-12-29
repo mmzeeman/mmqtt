@@ -29,7 +29,14 @@ start(_StartType, _StartArgs) ->
     %% And for gproc
     ok = ensure_started([gproc]),
 
-    mmqtt_sup:start_link().
+    %% Start our application supervisor
+    {ok, Pid} = mmqtt_sup:start_link(),
+
+    %% Initialize basic authorization
+    mmqtt_basic_auth:observe(),
+
+    {ok, Pid}.
+
 
 stop(_State) ->
     ok.

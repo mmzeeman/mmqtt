@@ -21,10 +21,16 @@
 
 -export([start_link/0]).
 
--export([notify/2, first/2]).
+-export([observe/2, observe/3, notify/2, first/2]).
 
 start_link() ->
     notifier:start_link(?MODULE).
+
+observe(Name, Observer) ->
+    notifier:observe(?MODULE, Name, Observer).
+
+observe(Name, Observer, Priority) ->
+    notifier:observe(?MODULE, Name, Observer, Priority).
 
 notify(Msg, Args) ->
     notifier:notify(?MODULE, Msg, Args).

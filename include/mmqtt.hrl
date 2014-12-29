@@ -29,6 +29,14 @@
 %%
 
 %% Check if action is allowed. 
+
+-record(logon, {
+    client_id,
+    username,
+    password,
+    socket
+}).
+
 -record(is_allowed, {
     action,
     object,
@@ -38,14 +46,13 @@
 
 %% A client subscribed to a topic
 -record(client_subscribe, {
-        topic :: binary(),
-        qos :: 0 | 1 | 2
+    topic :: binary(),
+    qos :: 0 | 1 | 2
 }).
 
 %% A client un-subscribed 
 -record(client_unsubscribe, {
-        topic :: binary(),
-        qos :: 0 | 1 | 2
+    topic :: binary(),
+    qos :: 0 | 1 | 2
 }).
-
 

@@ -23,7 +23,7 @@
 
 % api 
 -export([
-    start/3,
+    start/4,
     stop/1,
 
     start_link/1,
@@ -60,6 +60,8 @@
     clean_session=true :: boolean(),
     will=undefined,
 
+    logon_state :: term(),
+
     sent_qos_1_2_pending_ack=[],
     recv_qos_2_pending_ack=[],
 
@@ -74,12 +76,13 @@
 
 % @doc Start a new session
 %
-start(Id, CleanSession, Will) ->
+start(Id, CleanSession, Will, LogonState) ->
     supervisor:start_child(mmqtt_session_sup, {Id,
             {?MODULE, start_link, [[
                         {id, Id},
                         {clean_session, CleanSession},
                         {will, Will},
+                        {logon_state, LogonState},
                         {connection, self()} 
                     ]]}, temporary, 5000, worker, dynamic}).
 
@@ -198,8 +201,10 @@ init([Opts]) ->
 
     Will = required_opt(will, Opts),
     CleanSession = required_opt(clean_session, Opts),
+    LogonState = required_opt(logon_state, Opts),
 
-    {ok, #state{id=Id, will=Will, clean_session=CleanSession, connection=Connection}}.
+    {ok, #state{id=Id, will=Will, logon_state=LogonState, 
+            clean_session=CleanSession, connection=Connection}}.
 
 %% Publish
 handle_call({publish, _Msg}, _From, State) ->
@@ -239,8 +244,8 @@ handle_info({route, #mqtt_publish{}=Msg}, #state{connection=Pid}=State) ->
     {noreply, State};
 
 
-handle_info({'EXIT', Pid, Reason}, #state{connection=Pid, will=undefined}=State) ->
-    %% Connection exit, but no stored will
+handle_info({'EXIT', Pid, _Reason}, #state{connection=Pid, will=undefined}=State) ->
+    %% Connection exit, but no stored will, ignore
     {noreply, State#state{connection=undefined}};
 handle_info({'EXIT', Pid, Reason}, #state{connection=Pid, will=#mqtt_will{retain=Retain, qos=QoS, 
             topic=Topic, message=Message}}=State) ->
