@@ -24,11 +24,13 @@
 % api 
 -export([
     start/3,
-    start_link/1,
     stop/1,
+
+    start_link/1,
 
     clean/1,
     session_id/1,
+    disconnect/1,
 
     publish/2,
     subscribe/2,
@@ -108,7 +110,6 @@ clean(ClientId) ->
             ok
     end.
 
-
 % @doc Get an id for this session.
 % 
 session_id(<<>>) ->
@@ -118,6 +119,12 @@ session_id(<<>>) ->
 session_id(ClientId) ->
     ClientId.
 
+% @doc Disconnect
+%
+disconnect(Pid) when is_pid(Pid) ->
+    gen_server:call(Pid, disconnect);
+disconnect(ClientId) -> 
+    gen_server:call({via, ?MODULE, ClientId}, disconnect).
 
 % @doc Publish a message
 %
@@ -208,6 +215,13 @@ handle_call({unsubscribe, Topics}, _From, State) ->
     Answer = do_unsubscribe(Topics),     
     {reply, {ok, Answer}, State};
 
+handle_call(disconnect, _From, #state{}=State) ->
+    %% Disconnect from the router,
+    mmqtt_router:disconnect(self()),
+
+    %% And forget the stored will.
+    {reply, ok, State#state{will=undefined}};
+
 handle_call(Msg, _From, State) ->
     {stop, {unexpected_msg, Msg}, State}.
 
@@ -223,6 +237,18 @@ handle_info({route, #mqtt_publish{}=Msg}, #state{connection=Pid}=State) ->
     end,
 
     {noreply, State};
+
+
+handle_info({'EXIT', Pid, Reason}, #state{connection=Pid, will=undefined}=State) ->
+    %% Connection exit, but no stored will
+    {noreply, State#state{connection=undefined}};
+handle_info({'EXIT', Pid, Reason}, #state{connection=Pid, will=#mqtt_will{retain=Retain, qos=QoS, 
+            topic=Topic, message=Message}}=State) ->
+    lager:info("Connection exit, reason(~p), publishing last will.", [Reason]),
+    Msg = #mqtt_publish{dup=0, qos=QoS, retain=Retain, topic_name=Topic, payload=Message},
+    mmqtt_router:publish(Msg),
+    {noreply, State#state{connection=undefined, will=undefined}};
+
 handle_info(Msg, #state{}=State) ->
     lager:info("session: ~p (~p)", [Msg, State]),
     {noreply, State}.

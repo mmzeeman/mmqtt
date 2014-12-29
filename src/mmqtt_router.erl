@@ -37,7 +37,7 @@
     publish/2,
     route/2,
     match/1,
-    down/1
+    disconnect/1
 ]).
 
 -export([
@@ -93,6 +93,10 @@ publish(Topic, Msg) when is_record(Msg, mqtt_publish) ->
                 route(Name, Msg) 
         end, match(Topic)).
 
+% @doc Disconnect client
+disconnect(Client) when is_pid(Client) ->
+    do_down(Client).
+
 % @doc Route message locally, should only be called by publish
 route(Topic, #mqtt_publish{qos=Qos}=Msg) when is_binary(Topic) ->
     [Client ! {route, Msg#mqtt_publish{qos=route_qos(Qos, SubscriberQos)}} || 
@@ -112,9 +116,6 @@ match(Topic) ->
         Name =/= undefined],
     lists:flatten(Topics).
 
-% @doc
-down(Client) when is_pid(Client) ->
-    gen_server:cast(?MODULE, {down, Client}).
     
 %%
 %% Gen-server callbacks
@@ -146,10 +147,6 @@ handle_call(stop, _From, State) ->
 
 handle_call(Req, _From, State) ->
     {stop, {badreq,Req}, State}.
-
-handle_cast({down, Client}, State) ->
-    do_down(Client),
-    {noreply, State};
 
 handle_cast(Msg, State) ->
     {stop, {badmsg, Msg}, State}.
