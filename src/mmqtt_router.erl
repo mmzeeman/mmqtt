@@ -89,6 +89,7 @@ publish(Msg=#mqtt_publish{topic_name=Topic}) ->
 
 % @doc 
 publish(Topic, Msg) when is_record(Msg, mqtt_publish) ->
+    handle_retain(Msg),
     lists:foreach(fun(#topic{name=Name}) -> 
                 route(Name, Msg) 
         end, match(Topic)).
@@ -112,8 +113,7 @@ route_qos(2, 2) -> 2.
 % @doc Return all
 match(Topic) ->
     TrieNodes = trie_match(mmqtt_topic:words(to_binary(Topic))),
-    Topics = [ets:lookup(?TOPIC_TABLE, Name) || #trie_node{topic=Name} <- TrieNodes, 
-        Name =/= undefined],
+    Topics = [ets:lookup(?TOPIC_TABLE, Name) || #trie_node{topic=Name} <- TrieNodes, Name =/= undefined],
     lists:flatten(Topics).
 
     
@@ -167,6 +167,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%
 %% Helpers
 %%
+
+handle_retain(#mqtt_publish{retain=true, payload= <<>>}=Msg) ->
+    mmqtt_retain:delete(Msg);
+handle_retain(#mqtt_publish{retain=true}=Msg) ->
+    mmqtt_retain:insert(Msg);
+handle_retain(#mqtt_publish{}) ->
+    ok.
 
 try_remove_topic(Name) ->
     case ets:member(?SUBSCRIBER_TABLE, Name) of
@@ -306,8 +313,6 @@ do_unsubscribe([Topic|Topics], Client) ->
     try_remove_topic(Topic),
     mmqtt_notifier:notify(#client_unsubscribe{topic=Topic}, Client),
     do_unsubscribe(Topics, Client).
-
-
 
 %% Remove client from subscriptions
 %

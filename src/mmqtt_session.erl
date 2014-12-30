@@ -140,6 +140,7 @@ publish(Pid, #mqtt_publish{}=Message) when is_pid(Pid) ->
 publish(ClientId, #mqtt_publish{}=Message) ->
     gen_server:call({via, ?MODULE, ClientId}, {publish, Message}).
 
+
 % @doc Subscribe to topics
 %
 subscribe(Pid, Topics) when is_pid(Pid) ->
@@ -285,7 +286,4 @@ required_opt(Name, Opts) ->
         {Name, Value} -> 
             Value
     end.
-
-valid_callback(Mod) ->
-    lists:member({handle_event, 3}, Mod:module_info(exports)).
 

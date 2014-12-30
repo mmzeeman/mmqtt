@@ -30,13 +30,7 @@ start(_StartType, _StartArgs) ->
     ok = ensure_started([gproc]),
 
     %% Start our application supervisor
-    {ok, Pid} = mmqtt_sup:start_link(),
-
-    %% Initialize basic authorization
-    mmqtt_basic_auth:observe(),
-
-    {ok, Pid}.
-
+    mmqtt_sup:start_link().
 
 stop(_State) ->
     ok.

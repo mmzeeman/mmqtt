@@ -24,6 +24,7 @@
 -export([
     handle_packet/2,
     handle_info/2,
+    handle_event/2,
 
     connect/3
 ]).
@@ -74,7 +75,7 @@ handle_packet(#mqtt_pingreq{}, _Args) ->
 handle_packet(_MqttPacket, _Args) ->
     noreply.
 
-%% Events
+%% Info 
 %%
 handle_info({send, Msg}, Args) ->
     io:fwrite(standard_error, "handle_info: ~p, ~p~n", [Msg, Args]),
@@ -83,13 +84,23 @@ handle_info(Msg, Args) ->
     io:fwrite(standard_error, "handle_info: ~p, ~p~n", [Msg, Args]),
     noreply.
 
+
+%% Events
+handle_event(mmqtt_startup, Args) ->
+    %% Initialize the authentication module.
+    {auth, {Auth, AuthArgs}} = proplists:lookup(auth, Args),
+    Auth:init(AuthArgs);
+handle_event(_, _) ->
+    ignore.
+    
+
 %% Connect
 
 do_connect(#mqtt_connect{client_id=ClientId, 
         username=UserName, password=Password,
         clean_session=true, will=Will}, Socket, Options) ->
-    case mmqtt_notifier:first(#logon{client_id=ClientId, 
-                username=UserName, password=Password, socket=Socket}, Options) of
+
+    case logon(UserName, Password, Socket, Options) of
         {accepted, LoginState} ->
             ok = mmqtt_session:clean(ClientId),
 
@@ -107,6 +118,10 @@ do_connect(#mqtt_connect{client_id=ClientId,
 %%
 %% Helpers
 %%
+
+logon(UserName, Password, Socket, Options) ->
+    {auth, {Auth, AuthArgs}} = proplists:lookup(auth, Options),
+    Auth:logon(UserName, Password, Socket, AuthArgs).
 
 subscribe(SessionPid, #mqtt_subscribe{topics=Topics, packet_identifier=PackId}, State) ->
     {ok, Reply} = mmqtt_session:subscribe(SessionPid, Topics),

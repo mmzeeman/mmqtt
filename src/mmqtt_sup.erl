@@ -47,6 +47,7 @@ init([]) ->
     {ok, { {one_for_all, 5, 10}, [
                 ?CHILD(mmqtt_router, worker),
                 ?CHILD(mmqtt_notifier, worker),
+                ?CHILD(mmqtt_retain, worker),
                 ?CHILD(mmqtt_session_sup, supervisor)
             ]}}.
 

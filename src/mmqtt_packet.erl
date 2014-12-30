@@ -20,7 +20,7 @@
 -module(mmqtt_packet).
 
 -export([decode/1, decode/2]).
--export([encode/1]).
+-export([payload/1, encode_payload/1, encode/1]).
 
 -include("../include/mmqtt_packet.hrl").
 
@@ -75,6 +75,23 @@ decode(Data, {more, Fun}) ->
         {'EXIT', Error} -> {error, Error}
     end.
 
+% @doc Get the payload from a mqtt packet.
+%
+payload(#mqtt_publish{payload=Payload}) ->
+    payload(Payload);
+payload(Bin) when is_binary(Bin) ->
+    Bin;
+payload({V, _Encoder}) ->
+    V.
+
+% @doc Get the encoded payload from a mqtt packet
+%
+encode_payload(Bin) when is_binary(Bin) ->
+    Bin;
+encode_payload({V, F}) when is_function(F) ->
+    F(V);
+encode_payload({V, {M, F}}) ->
+    M:F(V).
 
 %% @doc Encode a mqtt packet to bytes
 encode(#mqtt_connack{session_present=SessionPresent, 
@@ -89,12 +106,14 @@ encode(#mqtt_publish{dup=Dup, qos=QoS, retain=Retain, packet_identifier=Pi,
         1 -> {0,1};
         2 -> {1,0}
     end,
+
     Msg = case Pi of
         undefined ->
-            <<Topic/binary, Payload/binary>>;
+            <<Topic/binary, (encode_payload(Payload))/binary>>;
         _ ->
-            <<Topic/binary, Pi:16, Payload/binary>>
+            <<Topic/binary, Pi:16, (encode_payload(Payload))/binary>>
     end,
+
     encode(?PUBLISH, {to_flag(Dup), F2, F3, to_flag(Retain)}, Msg);
 
 encode(#mqtt_puback{packet_identifier=Pi}) ->
@@ -142,6 +161,9 @@ bin_len(N) when N =< ?LOWBITS ->
     <<0:1, N:7>>;
 bin_len(N) ->
     <<1:1, (N rem ?HIGHBIT):7, (bin_len(N div ?HIGHBIT))/binary>>.
+
+
+
 
 %%
 %%

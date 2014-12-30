@@ -17,32 +17,19 @@
         {callback, mmqtt_middleware},
         {callback_args, [
                 {mods, [ 
-                        {mmqtt_connection, []},
-                        {mmqtt_logger, []}
+                        {mmqtt_connection, [
+                                {auth, {mmqtt_auth_anonymous, []}}
+                            ]},
+                        {mmqtt_logger, [{logger, true}]}
                     ]}
             ]}
     ]).
-
 
 %%
 %% Notifications
 %%
 
 %% Check if action is allowed. 
-
--record(logon, {
-    client_id,
-    username,
-    password,
-    socket
-}).
-
--record(is_allowed, {
-    action,
-    object,
-    subject
-}).
-
 
 %% A client subscribed to a topic
 -record(client_subscribe, {
