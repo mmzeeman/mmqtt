@@ -28,6 +28,10 @@
 
 -behaviour(gen_server).
 
+-type multi_level_wildcard() :: 35.  % $#
+-type single_level_wildcard() :: 43. % $+
+-type wildcard() :: single_level_wildcard() | multi_level_wildcard().
+
 -export([
     start_link/0,
     topics/0,
@@ -209,9 +213,7 @@ trie_delete(Topic) ->
         [#trie_node{edge_count=0}] ->
             ets:delete(?NODE_TABLE, Topic),
             trie_delete_path(lists:reverse(mmqtt_topic:triples(Topic)));
-        [TrieNode] ->
-            ets:insert(?NODE_TABLE, TrieNode#trie_node{topic=Topic});
-        [] -> 
+        _ ->
             ignore
     end.
 
@@ -383,7 +385,8 @@ subscribe_unsubscribe_test_() ->
 random_sub_match_test() ->
     Pid = setup(),
     try
-        ?assertEqual(true, proper:quickcheck(subscribe_props(), [{to_file, user}]))
+        ?assertEqual(true, proper:quickcheck(subscribe_props(), [{to_file, user}, 
+                    {numtests, 500}]))
     after
         teardown(Pid)
     end,
@@ -392,10 +395,12 @@ random_sub_match_test() ->
 subscribe_props() ->
     ?FORALL(
        IntTopics,
-       list(list(int())),
+       list(list(weighted_union([
+                       {1, single_level_wildcard()}, 
+                       {5, range($a, $z)}
+                   ]))),
        begin 
            Topics = [to_topic(IntTopic, <<>>) || IntTopic <- IntTopics],
-
 
            %% Test subscribing to the topics one by one.
            subscribe_multi_props(Topics, []),
@@ -441,8 +446,7 @@ to_topic([], <<>>) ->
 to_topic([], Topic) ->
     Topic;
 to_topic([H|T], Topic) ->
-    B = list_to_binary(integer_to_list(H)),
-    to_topic(T, <<Topic/binary, $/, B/binary>>).
+    to_topic(T, <<Topic/binary, $/, H>>).
 
 
 setup() ->
