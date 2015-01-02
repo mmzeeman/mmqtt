@@ -213,6 +213,8 @@ trie_delete(Topic) ->
         [#trie_node{edge_count=0}] ->
             ets:delete(?NODE_TABLE, Topic),
             trie_delete_path(lists:reverse(mmqtt_topic:triples(Topic)));
+        [#trie_node{topic=NodeTopic}] when NodeTopic =/= Topic ->
+            ets:update_element(?NODE_TABLE, Topic, {#trie_node.topic, Topic});
         _ ->
             ignore
     end.
