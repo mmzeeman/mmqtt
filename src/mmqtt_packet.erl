@@ -32,20 +32,20 @@
 -define(HIGHBIT, 2#10000000).
 -define(LOWBITS, 2#01111111).
 
--type mqtt_connect() :: record(mqtt_connect).
--type mqtt_connack() :: record(mqtt_connack).
--type mqtt_publish() :: record(mqtt_publish).
--type mqtt_puback() :: record(mqtt_puback).
--type mqtt_pubrec() :: record(mqtt_pubrec).
--type mqtt_pubrel() :: record(mqtt_pubrel).
--type mqtt_pubcomp() :: record(mqtt_pubcomp).
--type mqtt_subscribe() :: record(mqtt_subscribe).
--type mqtt_suback() :: record(mqtt_suback).
--type mqtt_unsubscribe() :: record(mqtt_unsubscribe).
--type mqtt_unsuback() :: record(mqtt_unsuback).
--type mqtt_pingreq() :: record(mqtt_pingreq).
--type mqtt_pingresp() :: record(mqtt_pingresp).
--type mqtt_disconnect() :: record(mqtt_disconnect).
+-type mqtt_connect() :: #mqtt_connect{}.
+-type mqtt_connack() :: #mqtt_connack{}.
+-type mqtt_publish() :: #mqtt_publish{}.
+-type mqtt_puback() :: #mqtt_puback{}.
+-type mqtt_pubrec() :: #mqtt_pubrec{}.
+-type mqtt_pubrel() :: #mqtt_pubrel{}.
+-type mqtt_pubcomp() :: #mqtt_pubcomp{}.
+-type mqtt_subscribe() :: #mqtt_subscribe{}.
+-type mqtt_suback() :: #mqtt_suback{}.
+-type mqtt_unsubscribe() :: #mqtt_unsubscribe{}.
+-type mqtt_unsuback() :: #mqtt_unsuback{}.
+-type mqtt_pingreq() :: #mqtt_pingreq{}.
+-type mqtt_pingresp() :: #mqtt_pingresp{}.
+-type mqtt_disconnect() :: #mqtt_disconnect{}.
 
 -type mqtt_packet() :: mqtt_connect() | mqtt_connack() | 
     mqtt_publish() | mqtt_puback() | mqtt_pubrec() | mqtt_pubrel() | mqtt_pubcomp() | 

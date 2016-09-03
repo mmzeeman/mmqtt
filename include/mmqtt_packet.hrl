@@ -50,7 +50,7 @@
         username :: undefined | binary(),
         password :: undefined | binary(),
 
-        will :: undefined | record(mqtt_will),
+        will :: undefined | #mqtt_will{},
 
         clean_session :: boolean(),
 
