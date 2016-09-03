@@ -28,9 +28,18 @@
 
 -behaviour(gen_server).
 
--type multi_level_wildcard() :: 35.  % $#
+-define(SINGLE_LEVEL_WILDCARD, 43).
+-define(MULTI_LEVEL_WILDCARD, 35).
+
 -type single_level_wildcard() :: 43. % $+
+-type multi_level_wildcard() :: 35.  % $#
 -type wildcard() :: single_level_wildcard() | multi_level_wildcard().
+
+-export_type([wildcard/0]).
+
+%%
+%% api
+%%
 
 -export([
     start_link/0,
@@ -43,6 +52,10 @@
     match/1,
     disconnect/1
 ]).
+
+%%
+%% gen_server exports
+%%
 
 -export([
     init/1,
@@ -58,7 +71,9 @@
 -define(TOPIC_TABLE, mmqtt_router_topic).
 -define(SUBSCRIBER_TABLE, mmqtt_router_subscriber).
 
--record(state, {}).
+-record(state, {
+    router
+}).
 
 %%
 %% Api
@@ -134,8 +149,10 @@ init([]) ->
     ets:new(?TOPIC_TABLE, [protected, named_table, bag, {read_concurrency, true}, {keypos, 2}]),
     ets:new(?SUBSCRIBER_TABLE, [protected, named_table, bag, {read_concurrency, true}, {keypos, 2}]),
 
+    Router = router:new(?MODULE),
+
     lager:info("~p is started.", [?MODULE]),
-    {ok, #state{}}.
+    {ok, #state{router=Router}}.
 
 handle_call({subscribe, Topics, Client}, _From, State) when is_list(Topics) ->
     _ = erlang:monitor(process, Client),
@@ -162,7 +179,8 @@ handle_info(Info, State) ->
     lager:warning("Unexpected message: ~p", [Info]),
     {noreply, State}.
 
-terminate(_Reason, _State) ->
+terminate(_Reason, #state{router=Router}=_State) ->
+    true = router:delete(Router),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -398,7 +416,7 @@ subscribe_props() ->
     ?FORALL(
        IntTopics,
        list(list(weighted_union([
-                       {1, single_level_wildcard()}, 
+                       {1, ?SINGLE_LEVEL_WILDCARD}, 
                        {5, range($a, $z)}
                    ]))),
        begin 
@@ -452,11 +470,13 @@ to_topic([H|T], Topic) ->
 
 
 setup() ->
+    application:start(router),
     {ok, Pid} = start_link(),
     Pid.
 
 teardown(_) ->
-    gen_server:call(?MODULE, stop).
+    gen_server:call(?MODULE, stop),
+    application:stop(router).
 
 -endif.
 
