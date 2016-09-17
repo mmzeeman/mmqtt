@@ -41,7 +41,8 @@
     match/2,
     validate/1,
     triples/1,
-    words/1
+    words/1,
+    path/1
 ]).
 
 -define(MAX_LEN, 64*1024).
@@ -118,6 +119,15 @@ words(Topic) when is_binary(Topic) ->
 map_wc(<<"+">>) -> $+;
 map_wc(<<"#">>) -> $#;
 map_wc(W) -> W.
+
+path(Topic) when is_binary(Topic) ->
+    case binary:split(Topic, <<$/>>, [global]) of
+        [H|T] -> [ map_path_wc(H) | [ map_path_wc(W) || W <-T, T =/= <<>> ]];
+        [] -> []
+    end.
+map_path_wc(<<"+">>) -> '+';
+map_path_wc(<<"#">>) -> '#';
+map_path_wc(W) -> W.
 
 valid([<<>>|Words]) -> valid2(Words);
 valid(Words) -> valid2(Words).

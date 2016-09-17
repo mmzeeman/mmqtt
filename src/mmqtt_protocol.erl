@@ -47,7 +47,7 @@
 }).
 
 -record(state, {
-    alive_check = undefined :: undefined | record(alive_check),
+    alive_check = undefined :: undefined | #alive_check{},
 
     dispatch :: module(),
     context :: term()

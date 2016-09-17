@@ -12,9 +12,6 @@
 %% Copyright (c) 2012 Ery Lee.  All rights reserved.
 %%
 
-%% Changed into an ets based router by:
-%% Maas-Maarten Zeeman <mmzeeman@xs4all.nl>.
-
 -module(mmqtt_router).
 
 -include("mmqtt.hrl").
@@ -119,6 +116,10 @@ disconnect(Client) when is_pid(Client) ->
 
 % @doc Route message locally, should only be called by publish
 route(Topic, #mqtt_publish{qos=Qos}=Msg) when is_binary(Topic) ->
+    R = router:match(?MODULE, mmqtt_topic:words(Topic)),
+
+    io:fwrite(standard_error, "Matches: ~p~n", [R]),
+
     [Client ! {route, Msg#mqtt_publish{qos=route_qos(Qos, SubscriberQos)}} || 
         #subscriber{qos=SubscriberQos, client=Client} <- ets:lookup(?SUBSCRIBER_TABLE, Topic)].
 
@@ -133,6 +134,12 @@ route_qos(2, 2) -> 2.
 match(Topic) ->
     TrieNodes = trie_match(mmqtt_topic:words(to_binary(Topic))),
     Topics = [ets:lookup(?TOPIC_TABLE, Name) || #trie_node{topic=Name} <- TrieNodes, Name =/= undefined],
+
+    P = mmqtt_topic:path(to_binary(Topic)),
+    M = router:route(?MODULE, P),
+    io:fwrite(standard_error, "Matches: ~p~n", [M]),
+
+    io:fwrite(standard_error, "Topics: ~p~n", [Topics]),
     lists:flatten(Topics).
 
     
@@ -152,6 +159,7 @@ init([]) ->
     Router = router:new(?MODULE),
 
     lager:info("~p is started.", [?MODULE]),
+
     {ok, #state{router=Router}}.
 
 handle_call({subscribe, Topics, Client}, _From, State) when is_list(Topics) ->
@@ -321,6 +329,11 @@ do_subscribe([], _Client) ->
 do_subscribe([{Topic, QoS}|Topics], Client) ->
     trie_add(Topic),
     ets:insert(?SUBSCRIBER_TABLE, #subscriber{topic=Topic, qos=QoS, client=Client}),
+
+    %%  New add.
+    Path = mmqtt_topic:path(Topic),
+    router:add(?MODULE, Path, #subscriber{topic=Topic, qos=QoS, client=Client}),
+
     mmqtt_notifier:notify(#client_subscribe{topic=Topic, qos=QoS}, Client),
     do_subscribe(Topics, Client).
 
@@ -333,6 +346,11 @@ do_unsubscribe([], _Client) ->
 do_unsubscribe([Topic|Topics], Client) ->
     ets:match_delete(?SUBSCRIBER_TABLE, #subscriber{topic=Topic, client=Client, _='_'}),
     try_remove_topic(Topic),
+
+    %% New unsubscribe
+    Path = mmqtt_topic:path(Topic),
+    router:remove_path(?MODULE, Path, #subscriber{topic=Topic, client=Client, _='_'}),
+
     mmqtt_notifier:notify(#client_unsubscribe{topic=Topic}, Client),
     do_unsubscribe(Topics, Client).
 
