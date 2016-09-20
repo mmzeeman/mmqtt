@@ -22,20 +22,23 @@
 %% limitations under the License.
 
 -module(mmqtt_protocol).
+-behaviour(ranch_protocol).
 
 %% mqtt network connection fsm
 
 -include("include/mmqtt_packet.hrl").
 
 %% API
--export([start_link/4]).
+-export([old_start_link/4]).
+
+-export([start_link/4, init/4]).
 
 %% Exported for looping with a fully-qualified module name
 -export([
     accept/4, 
 
-    connecting_state/3, connecting_state/4,
-    connected_state/5
+    connecting_state/4, connecting_state/5,
+    connected_state/6
     ]).
 
 -type callback() :: {module(), atom()}.
@@ -53,27 +56,49 @@
     context :: term()
 }).
 
--spec start_link(pid(), mmqtt_tcp:socket(), proplists:proplist(), callback()) -> pid().
-start_link(Server, ListenSocket, Options, Callback) ->
-    proc_lib:spawn_link(?MODULE, accept, [Server, ListenSocket, Options, Callback]).
-
--spec accept(pid(), mmqtt_tcp:socket(), proplists:proplist(), callback()) -> ok.
-
 -define(IS_C2S_PACKET(R), (is_record(R, mqtt_publish) orelse 
     is_record(R, mqtt_subscribe) orelse 
     is_record(R, mqtt_unsubscribe) orelse 
     is_record(R, mqtt_pingreq) orelse 
     is_record(R, mqtt_disconnect))).
 
+-spec old_start_link(pid(), mmqtt_tcp:socket(), proplists:proplist(), callback()) -> pid().
+old_start_link(Server, ListenSocket, Options, Callback) ->
+    proc_lib:spawn_link(?MODULE, accept, [Server, ListenSocket, Options, Callback]).
+
+%%
+%%
+%%
+
+-spec start_link(ranch:ref(), inet:socket(), module(), mmqtt:opts()) -> {ok, pid()}.
+start_link(Ref, Socket, Transport, Options) ->
+    Pid = proc_lib:spawn_link(?MODULE, init, [Ref, Socket, Transport, Options]),
+    {ok, Pid}.
+
+init(Ref, Socket, Transport, Options) ->
+    io:fwrite(standard_error, "ref: ~p~n", [Ref]),
+    ok = ranch:accept_ack(Ref),
+    io:fwrite(standard_error, "options: ~p~n", [Options]),
+    {callback, Callback} = proplists:lookup(callback, Options),
+    
+    try
+        ?MODULE:connecting_state(Socket, Transport, Options, Callback)
+    catch    
+        _:_=E ->
+            io:fwrite(standard_error, "Error: ~p~n", [E]),
+            erlang:display(erlang:get_stacktrace())
+    end.
+
 %% @doc: Accept on the socket until a client connects. Handles the
 %% request, then loops if we're using keep alive or chunked
 %% transfer. If accept doesn't give us a socket within a configurable
 %% timeout, we loop to allow code upgrades of this module.
+-spec accept(pid(), mmqtt_tcp:socket(), proplists:proplist(), callback()) -> ok.
 accept(Server, ListenSocket, Options, Callback) ->
     case catch mmqtt_tcp:accept(ListenSocket, accept_timeout(Options)) of
         {ok, Socket} ->
             gen_server:cast(Server, accepted),
-            ?MODULE:connecting_state(Socket, Options, Callback);
+            ?MODULE:connecting_state(Socket, mmqtt_tcp, Options, Callback);
         {error, timeout} ->
             ?MODULE:accept(Server, ListenSocket, Options, Callback);
         {error, econnaborted} ->
@@ -88,58 +113,58 @@ accept(Server, ListenSocket, Options, Callback) ->
 %% Connecting state
 %%
 
-connecting_state(Socket, Options, Callback) ->
-    connecting_state(Socket, mmqtt_packet:decode(<<>>), Options, Callback).
+connecting_state(Socket, Transport, Options, Callback) ->
+    connecting_state(Socket, Transport, mmqtt_packet:decode(<<>>), Options, Callback).
 
-connecting_state(Socket, {more, _}=More, Options, {Mod, Args}=Callback) ->
+connecting_state(Socket, Transport, {more, _}=More, Options, {Mod, Args}=Callback) ->
     %% Socket in passive state.
-    case mmqtt_tcp:recv(Socket, 0, connect_timeout(Options)) of
+    case Transport:recv(Socket, 0, connect_timeout(Options)) of
         {ok, Data} ->
-            ?MODULE:connecting_state(Socket, mmqtt_packet:decode(Data, More), Options, Callback);
+            ?MODULE:connecting_state(Socket, Transport, mmqtt_packet:decode(Data, More), Options, Callback);
         {error, timeout} ->
             handle_event(Mod, connect_timeout, [], Args),
-            mmqtt_tcp:close(Socket),
+            Transport:close(Socket),
             exit(normal);
         {error, Closed} when Closed =:= closed orelse Closed =:= enotconn ->
             handle_event(Mod, connection_closed, [], Args),
-            mmqtt_tcp:close(Socket),
+            Transport:close(Socket),
             exit(normal)
     end;
 
-connecting_state(Socket, {ok, #mqtt_connect{}=Connect, Rest}, Options, {Mod, Args}=Callback) ->
+connecting_state(Socket, Transport, {ok, #mqtt_connect{}=Connect, Rest}, Options, {Mod, Args}=Callback) ->
     handle_event(Mod, in_packet, [Connect], Args),
-    case handle_connect(Mod, Connect, Socket, Args) of
+    case handle_connect(Mod, Connect, Socket, Transport, Args) of
         {ok, State} -> 
             handle_event(Mod, connected, [], Args),
-            ?MODULE:connected_state(Socket, mmqtt_packet:decode(Rest), Options, Callback, State);
+            ?MODULE:connected_state(Socket, Transport, mmqtt_packet:decode(Rest), Options, Callback, State);
         {stop, Reason} ->
-            mmqtt_tcp:close(Socket),
+            Transport:close(Socket),
             exit(Reason)
     end;
 
-connecting_state(Socket, {ok, MqttPacket, _Rest}, _Options, {Mod, Args}) ->
+connecting_state(Socket, Transport, {ok, MqttPacket, _Rest}, _Options, {Mod, Args}) ->
     handle_event(Mod, protocol_error, [MqttPacket], Args),
-    mmqtt_tcp:close(Socket),
+    Transport:close(Socket),
     exit(normal);
 
-connecting_state(Socket, {error, _}=Error, _Options, {Mod, Args}) ->
+connecting_state(Socket, Transport, {error, _}=Error, _Options, {Mod, Args}) ->
     handle_event(Mod, packet_parse_error, [Error], Args),
-    mmqtt_tcp:close(Socket),
+    Transport:close(Socket),
     exit(normal).
 
 %% 
 %% Connected State
 %%
 
-connected_state(Socket, {more, _}=More, Options, {Mod, Args}=Callback, #state{dispatch=Dispatch, context=Context}=State) ->
-    mmqtt_tcp:setopts(Socket, [{active, once}]),
-    {Ok, Passive, Closed, Error} = mmqtt_tcp:messages(Socket),
+connected_state(Socket, Transport, {more, _}=More, Options, {Mod, Args}=Callback, #state{dispatch=Dispatch, context=Context}=State) ->
+    Transport:setopts(Socket, [{active, once}]),
+    {Ok, Passive, Closed, Error} = Transport:messages(Socket),
     receive
         {Ok, _S, Data} ->
-            ?MODULE:connected_state(Socket, mmqtt_packet:decode(Data, More), Options, Callback, State); 
+            ?MODULE:connected_state(Socket, Transport, mmqtt_packet:decode(Data, More), Options, Callback, State); 
         {Passive, _S} ->
             %% The socket was switched to passive mode, retry.
-            ?MODULE:connected_state(Socket, More, Options, Callback, State); 
+            ?MODULE:connected_state(Socket, Transport, More, Options, Callback, State); 
         {Closed, _S} ->
             handle_event(Mod, connection_closed, [], Args),
             exit(normal);
@@ -149,7 +174,7 @@ connected_state(Socket, {more, _}=More, Options, {Mod, Args}=Callback, #state{di
         check_alive ->
             case State#state.alive_check of
                 undefined ->
-                    ?MODULE:connected_state(Socket, More, Options, Callback, State); 
+                    ?MODULE:connected_state(Socket, Transport, More, Options, Callback, State); 
                 #alive_check{check_interval=Interval, last_packet_received=LastPacket}=AliveCheck ->
                     case timer:now_diff(os:timestamp(), LastPacket) of
                         Diff when Diff div 1000000 > Interval ->
@@ -158,30 +183,30 @@ connected_state(Socket, {more, _}=More, Options, {Mod, Args}=Callback, #state{di
                         _ ->
                             TRef = erlang:send_after(timer:seconds(Interval), self(), check_alive),
                             AliveCheck1 = AliveCheck#alive_check{timer_ref=TRef},
-                            ?MODULE:connected_state(Socket, More, Options, Callback, 
+                            ?MODULE:connected_state(Socket, Transport, More, Options, Callback, 
                                 State#state{alive_check=AliveCheck1})
                     end
             end;
         Message ->
             handle_event(Mod, in_message, [Message], Args),
-            case handle_info(Dispatch, Socket, Message, Context) of
+            case handle_info(Dispatch, Socket, Transport, Message, Context) of
                 {ok, Context1} ->
-                    connected_state(Socket, More, Options, Callback, State#state{context=Context1});
+                    connected_state(Socket, Transport, More, Options, Callback, State#state{context=Context1});
                 close ->
-                    mmqtt_tcp:close(Socket),
+                    Transport:close(Socket),
                     exit(normal)
             end
     end;
 
-connected_state(Socket, {error, _}=Error, _Options, {Mod, Args}, _State) ->
+connected_state(Socket, Transport, {error, _}=Error, _Options, {Mod, Args}, _State) ->
     handle_event(Mod, packet_parse_error, [Error], Args),
-    mmqtt_tcp:close(Socket),
+    Transport:close(Socket),
     exit(normal);
 
-connected_state(Socket, {ok, Packet, Rest}, Options, {Mod, Args}=Callback, #state{dispatch=Dispatch, 
+connected_state(Socket, Transport, {ok, Packet, Rest}, Options, {Mod, Args}=Callback, #state{dispatch=Dispatch, 
         context=Context}=State) when ?IS_C2S_PACKET(Packet) ->
     handle_event(Mod, in_packet, [Packet], Args),
-    case handle_packet(Dispatch, Socket, Packet, Context) of
+    case handle_packet(Dispatch, Socket, Transport, Packet, Context) of
         {ok, Context1} ->
             State1 = case State#state.alive_check of
                 undefined ->
@@ -190,14 +215,14 @@ connected_state(Socket, {ok, Packet, Rest}, Options, {Mod, Args}=Callback, #stat
                     State#state{context=Context1, 
                         alive_check=AliveCheck#alive_check{last_packet_received=os:timestamp()}}
             end,
-            connected_state(Socket, mmqtt_packet:decode(Rest), Options, Callback, State1);
+            connected_state(Socket, Transport, mmqtt_packet:decode(Rest), Options, Callback, State1);
         {stop, Reason} -> 
-            mmqtt_tcp:close(Socket),
+            Transport:close(Socket),
             exit(Reason)
     end;
-connected_state(Socket, {ok, Packet, _Rest}, _Options, {Mod, Args}, _State) ->
+connected_state(Socket, Transport, {ok, Packet, _Rest}, _Options, {Mod, Args}, _State) ->
     handle_event(Mod, protocol_error, [Packet], Args),
-    mmqtt_tcp:close(Socket),
+    Transport:close(Socket),
     exit(normal).
             
 %%
@@ -209,7 +234,7 @@ accept_timeout(Opts) ->
 connect_timeout(Opts) -> 
     proplists:get_value(connect_timeout, Opts).
 
-handle_connect(Mod, Packet, Socket, Args) ->
+handle_connect(Mod, Packet, Socket, Transport, Args) ->
     try Mod:connect(Packet, Socket, Args) of
         {{reply, #mqtt_connack{}=Reply, Context}, Dispatch} -> 
             State = case Packet#mqtt_connect.keep_alive of
@@ -221,14 +246,14 @@ handle_connect(Mod, Packet, Socket, Args) ->
                         timer_ref=TRef, last_packet_received=os:timestamp()},
                     #state{alive_check=AliveCheck}
             end,
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, State#state{dispatch=Dispatch, context=Context}};
         {{stop, Reason}, _Dispatch} -> 
-            ok = mmqtt_tcp:send(Socket, 
+            ok = Transport:send(Socket, 
                 mmqtt_packet:encode(#mqtt_connack{connect_return_code=?UNACCEPTABLE_PROTOCOL_VERSION})),
             {stop, Reason};
         {{stop, Reason, #mqtt_connack{}=Reply}, _Dispatch} -> 
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {stop, Reason} 
     catch 
         throw:Exc ->
@@ -243,17 +268,17 @@ handle_connect(Mod, Packet, Socket, Args) ->
     end.
 
 
-handle_packet(Dispatch, Socket, Packet, Context) ->
+handle_packet(Dispatch, Socket, Transport, Packet, Context) ->
     try Dispatch:handle_packet(Packet, Context) of
         noreply ->
             {ok, Context};
         {noreply, Context1} -> 
             {ok, Context1};
         {reply, Reply} -> 
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, Context};
         {reply, Reply, Context1} -> 
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, Context1};
         {stop, _Reason}=Stop -> 
             Stop;
@@ -271,22 +296,22 @@ handle_packet(Dispatch, Socket, Packet, Context) ->
             {stop, normal, Context}
     end.
 
-handle_info(Dispatch, Socket, Message, Context) ->
+handle_info(Dispatch, Socket, Transport, Message, Context) ->
     try Dispatch:handle_info(Message, Context) of
         noreply ->
             {ok, Context};
         {noreply, Context1} -> 
             {ok, Context1};
         {reply, Reply} ->
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, Context};
         {reply, Reply, Context1} -> 
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Reply)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, Context1};
         {stop, _Reason, _Context}=Stop ->
             Stop;
         {stop, Reason, Packet, Context1} ->
-            ok = mmqtt_tcp:send(Socket, mmqtt_packet:encode(Packet)),
+            ok = Transport:send(Socket, mmqtt_packet:encode(Packet)),
             {stop, Reason, Context1}
     catch 
         throw:Exc ->
