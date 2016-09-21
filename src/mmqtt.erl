@@ -32,6 +32,7 @@ start_link() ->
 start_link(Options) ->
     valid_callback(required_opt(callback, Options)) orelse throw(invalid_callback),
 
+    %%
     DefaultTransOpts = [{port, 1883}, {max_connections, 100}],
 
     case proplists:get_value(name, Options) of

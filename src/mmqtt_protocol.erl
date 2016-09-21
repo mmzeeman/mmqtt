@@ -76,13 +76,13 @@ start_link(Ref, Socket, Transport, Options) ->
     {ok, Pid}.
 
 init(Ref, Socket, Transport, Options) ->
-    io:fwrite(standard_error, "ref: ~p~n", [Ref]),
     ok = ranch:accept_ack(Ref),
-    io:fwrite(standard_error, "options: ~p~n", [Options]),
-    {callback, Callback} = proplists:lookup(callback, Options),
+    
+    {callback, Module} = proplists:lookup(callback, Options),
+    {callback_args, Args} = proplists:lookup(callback_args, Options),
     
     try
-        ?MODULE:connecting_state(Socket, Transport, Options, Callback)
+        ?MODULE:connecting_state(Socket, Transport, Options, {Module, Args})
     catch    
         _:_=E ->
             io:fwrite(standard_error, "Error: ~p~n", [E]),
@@ -230,9 +230,9 @@ connected_state(Socket, Transport, {ok, Packet, _Rest}, _Options, {Mod, Args}, _
 %%
 
 accept_timeout(Opts) -> 
-    proplists:get_value(accept_timeout, Opts).
+    proplists:get_value(accept_timeout, Opts, 10000).
 connect_timeout(Opts) -> 
-    proplists:get_value(connect_timeout, Opts).
+    proplists:get_value(connect_timeout, Opts, 60000).
 
 handle_connect(Mod, Packet, Socket, Transport, Args) ->
     try Mod:connect(Packet, Socket, Args) of
@@ -248,11 +248,11 @@ handle_connect(Mod, Packet, Socket, Transport, Args) ->
             end,
             ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {ok, State#state{dispatch=Dispatch, context=Context}};
-        {{stop, Reason}, _Dispatch} -> 
+        {stop, Reason} -> 
             ok = Transport:send(Socket, 
                 mmqtt_packet:encode(#mqtt_connack{connect_return_code=?UNACCEPTABLE_PROTOCOL_VERSION})),
             {stop, Reason};
-        {{stop, Reason, #mqtt_connack{}=Reply}, _Dispatch} -> 
+        {stop, Reason, #mqtt_connack{}=Reply} -> 
             ok = Transport:send(Socket, mmqtt_packet:encode(Reply)),
             {stop, Reason} 
     catch 
@@ -327,6 +327,7 @@ handle_info(Dispatch, Socket, Transport, Message, Context) ->
 
 handle_event(Mod, Name, EventArgs, Args) ->
     try
+        io:fwrite("event: ~p, ~p, ~p ~n", [Name, EventArgs, Args]),
         _ = Mod:handle_event(Name, EventArgs, Args)
     catch
         EvClass:EvError ->
