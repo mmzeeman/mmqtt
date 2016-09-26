@@ -19,6 +19,7 @@
 
 -module(mmqtt_middleware).
 -behaviour(mmqtt_handler).
+
 -export([connect/3, handle_event/3]).
 
 -include("include/mmqtt_packet.hrl").
@@ -36,10 +37,8 @@ process_connect(Connect, Socket, [{Mod, Args}|Mods]) ->
     case erlang:function_exported(Mod, connect, 3) of
         true ->
             case Mod:connect(Connect, Socket, Args) of
-                ignore ->
-                    process_connect(Connect, Socket, Mods);
-                Response -> 
-                    {Response, Mod}
+                ignore -> process_connect(Connect, Socket, Mods);
+                Response -> {Response, Mod}
             end;
         false ->
             process_connect(Connect, Socket, Mods)

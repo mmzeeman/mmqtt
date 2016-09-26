@@ -35,6 +35,7 @@
 
 %% Exported for looping with a fully-qualified module name
 -export([
+    startup/1,
     accept/4, 
 
     connecting_state/4, connecting_state/5,
@@ -67,8 +68,17 @@ old_start_link(Server, ListenSocket, Options, Callback) ->
     proc_lib:spawn_link(?MODULE, accept, [Server, ListenSocket, Options, Callback]).
 
 %%
+%% Api
 %%
-%%
+
+-spec startup(mmqtt:opts()) -> ok.
+startup(Options) ->
+    %% Notify the handler that we are about to start accepting
+    %% requests, so it can create necessary supporting processes, ETS
+    %% tables, etc.
+    {callback, Callback} = proplists:lookup(callback, Options),
+    {callback_args, CallbackArgs} = proplists:lookup(callback_args, Options),
+    ok = Callback:handle_event(mmqtt_startup, [], CallbackArgs).
 
 -spec start_link(ranch:ref(), inet:socket(), module(), mmqtt:opts()) -> {ok, pid()}.
 start_link(Ref, Socket, Transport, Options) ->
@@ -158,13 +168,10 @@ connecting_state(Socket, Transport, {error, _}=Error, _Options, {Mod, Args}) ->
 
 connected_state(Socket, Transport, {more, _}=More, Options, {Mod, Args}=Callback, #state{dispatch=Dispatch, context=Context}=State) ->
     Transport:setopts(Socket, [{active, once}]),
-    {Ok, Passive, Closed, Error} = Transport:messages(Socket),
+    {Ok, Closed, Error} = Transport:messages(),
     receive
         {Ok, _S, Data} ->
-            ?MODULE:connected_state(Socket, Transport, mmqtt_packet:decode(Data, More), Options, Callback, State); 
-        {Passive, _S} ->
-            %% The socket was switched to passive mode, retry.
-            ?MODULE:connected_state(Socket, Transport, More, Options, Callback, State); 
+            ?MODULE:connected_state(Socket, Transport, mmqtt_packet:decode(Data, More), Options, Callback, State);
         {Closed, _S} ->
             handle_event(Mod, connection_closed, [], Args),
             exit(normal);
@@ -235,6 +242,7 @@ connect_timeout(Opts) ->
     proplists:get_value(connect_timeout, Opts, 60000).
 
 handle_connect(Mod, Packet, Socket, Transport, Args) ->
+    io:fwrite("handle_connect: ~p~n", [Mod]),
     try Mod:connect(Packet, Socket, Args) of
         {{reply, #mqtt_connack{}=Reply, Context}, Dispatch} -> 
             State = case Packet#mqtt_connect.keep_alive of

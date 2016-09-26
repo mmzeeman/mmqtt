@@ -23,11 +23,10 @@
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    %% Apps needed for lager
     ok = ensure_started([syntax_tools, compiler, goldrush, lager]),
-
-    %% And for gproc
     ok = ensure_started([gproc]),
+    ok = ensure_started([ranch]),
+    ok = ensure_started([router]),
 
     %% Start our application supervisor
     mmqtt_sup:start_link().

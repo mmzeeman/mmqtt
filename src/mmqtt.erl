@@ -49,6 +49,7 @@ start_clear(Ref, TransOpts, ProtoOpts)  ->
 
 -spec start_clear(ranch:ref(), non_neg_integer(), ranch_tcp:opts(), mmqtt_protocol:opts()) -> {ok, pid()} | {error, any()}.
 start_clear(Ref, NbAcceptors, TransOpts, ProtoOpts) when is_integer(NbAcceptors), NbAcceptors > 0 ->
+    mmqtt_protocol:startup(ProtoOpts),
     ranch:start_listener(Ref, NbAcceptors, ranch_tcp, TransOpts, mmqtt_protocol, ProtoOpts).
 
 %%
