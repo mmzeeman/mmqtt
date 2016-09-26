@@ -36,7 +36,6 @@
 %% Exported for looping with a fully-qualified module name
 -export([
     startup/1,
-    accept/4, 
 
     connecting_state/4, connecting_state/5,
     connected_state/6
@@ -94,29 +93,8 @@ init(Ref, Socket, Transport, Options) ->
     try
         ?MODULE:connecting_state(Socket, Transport, Options, {Module, Args})
     catch    
-        _:_=E ->
-            io:fwrite(standard_error, "Error: ~p~n", [E]),
+        _:_ ->
             erlang:display(erlang:get_stacktrace())
-    end.
-
-%% @doc: Accept on the socket until a client connects. Handles the
-%% request, then loops if we're using keep alive or chunked
-%% transfer. If accept doesn't give us a socket within a configurable
-%% timeout, we loop to allow code upgrades of this module.
--spec accept(pid(), mmqtt_tcp:socket(), proplists:proplist(), callback()) -> ok.
-accept(Server, ListenSocket, Options, Callback) ->
-    case catch mmqtt_tcp:accept(ListenSocket, accept_timeout(Options)) of
-        {ok, Socket} ->
-            gen_server:cast(Server, accepted),
-            ?MODULE:connecting_state(Socket, mmqtt_tcp, Options, Callback);
-        {error, timeout} ->
-            ?MODULE:accept(Server, ListenSocket, Options, Callback);
-        {error, econnaborted} ->
-            ?MODULE:accept(Server, ListenSocket, Options, Callback);
-        {error, closed} ->
-            ok;
-        {error, Other} ->
-            exit({error, Other})
     end.
 
 %%
@@ -236,13 +214,10 @@ connected_state(Socket, Transport, {ok, Packet, _Rest}, _Options, {Mod, Args}, _
 %% Helpers
 %%
 
-accept_timeout(Opts) -> 
-    proplists:get_value(accept_timeout, Opts, 10000).
 connect_timeout(Opts) -> 
     proplists:get_value(connect_timeout, Opts, 60000).
 
 handle_connect(Mod, Packet, Socket, Transport, Args) ->
-    io:fwrite("handle_connect: ~p~n", [Mod]),
     try Mod:connect(Packet, Socket, Args) of
         {{reply, #mqtt_connack{}=Reply, Context}, Dispatch} -> 
             State = case Packet#mqtt_connect.keep_alive of
@@ -335,7 +310,6 @@ handle_info(Dispatch, Socket, Transport, Message, Context) ->
 
 handle_event(Mod, Name, EventArgs, Args) ->
     try
-        io:fwrite("event: ~p, ~p, ~p ~n", [Name, EventArgs, Args]),
         _ = Mod:handle_event(Name, EventArgs, Args)
     catch
         EvClass:EvError ->
